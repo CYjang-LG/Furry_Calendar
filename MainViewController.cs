@@ -147,6 +147,13 @@ public class MainViewController : MonoBehaviour
         {
             if (item != null)
             {
+                // 이벤트 구독 해제
+                EventItemUI itemUI = item.GetComponent<EventItemUI>();
+                if (itemUI != null)
+                {
+                    itemUI.OnCheckboxToggled -= OnEventCheckboxToggled;
+                }
+            
                 Destroy(item);
             }
         }
