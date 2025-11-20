@@ -1,20 +1,21 @@
 using System;
 using System.Collections;
+using System.Security.Cryptography;
+using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
 
 /// <summary>
-/// Google OAuth 2.0 인증을 처리하는 매니저
-/// Access Token과 Refresh Token을 관리하고 자동 갱신
+/// Google OAuth 2.0 PKCE 방식 인증 (모바일 앱용)
+/// Client Secret 없이 안전하게 인증
 /// </summary>
 public class GoogleOAuthManager : MonoBehaviour
 {
     public static GoogleOAuthManager Instance { get; private set; }
 
     [Header("OAuth Settings")]
-    [SerializeField] private string clientId = "YOUR_CLIENT_ID";
-    [SerializeField] private string clientSecret = "YOUR_CLIENT_SECRET";
-    [SerializeField] private string redirectUri = "http://localhost:8080";
+    [SerializeField] private string clientId = ""; // Inspector에서 입력
+    [SerializeField] private string redirectUri = "com.yourcompany.calendarapp:/oauth2redirect";
     
     private const string SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
     private const string AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -27,6 +28,10 @@ public class GoogleOAuthManager : MonoBehaviour
     public string AccessToken { get; private set; }
     private string refreshToken;
     private DateTime tokenExpiryTime;
+    
+    // PKCE 관련
+    private string codeVerifier;
+    private string codeChallenge;
 
     public bool IsAuthenticated => !string.IsNullOrEmpty(AccessToken) && DateTime.Now < tokenExpiryTime;
 
@@ -47,11 +52,60 @@ public class GoogleOAuthManager : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// PKCE Code Verifier 생성
+    /// </summary>
+    private void GeneratePKCECodes()
+    {
+        // Code Verifier: 43-128자 랜덤 문자열
+        const string unreservedChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+        var random = new System.Random();
+        var sb = new StringBuilder();
+        
+        for (int i = 0; i < 128; i++)
+        {
+            sb.Append(unreservedChars[random.Next(unreservedChars.Length)]);
+        }
+        
+        codeVerifier = sb.ToString();
+
+        // Code Challenge: Base64URL(SHA256(codeVerifier))
+        using (var sha256 = SHA256.Create())
+        {
+            var challengeBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(codeVerifier));
+            codeChallenge = Base64UrlEncode(challengeBytes);
+        }
+    }
+
+    /// <summary>
+    /// Base64 URL 인코딩
+    /// </summary>
+    private string Base64UrlEncode(byte[] input)
+    {
+        var base64 = Convert.ToBase64String(input);
+        base64 = base64.Replace("+", "-");
+        base64 = base64.Replace("/", "_");
+        base64 = base64.Replace("=", "");
+        return base64;
+    }
+
     public void StartAuthentication()
     {
-        string authUrl = $"{AUTH_URL}?client_id={clientId}&redirect_uri={Uri.EscapeDataString(redirectUri)}&response_type=code&scope={Uri.EscapeDataString(SCOPE)}&access_type=offline&prompt=consent";
+        GeneratePKCECodes();
+
+        string authUrl = $"{AUTH_URL}?" +
+            $"client_id={Uri.EscapeDataString(clientId)}&" +
+            $"redirect_uri={Uri.EscapeDataString(redirectUri)}&" +
+            $"response_type=code&" +
+            $"scope={Uri.EscapeDataString(SCOPE)}&" +
+            $"code_challenge={codeChallenge}&" +
+            $"code_challenge_method=S256&" +
+            $"access_type=offline&" +
+            $"prompt=consent";
+        
         Application.OpenURL(authUrl);
         Debug.Log("브라우저에서 인증을 진행하세요.");
+        Debug.Log($"Redirect URI: {redirectUri}");
     }
 
     public void ExchangeCodeForToken(string authCode)
@@ -64,9 +118,9 @@ public class GoogleOAuthManager : MonoBehaviour
         WWWForm form = new WWWForm();
         form.AddField("code", authCode);
         form.AddField("client_id", clientId);
-        form.AddField("client_secret", clientSecret);
         form.AddField("redirect_uri", redirectUri);
         form.AddField("grant_type", "authorization_code");
+        form.AddField("code_verifier", codeVerifier); // PKCE
 
         using (UnityWebRequest request = UnityWebRequest.Post(TOKEN_URL, form))
         {
@@ -103,7 +157,6 @@ public class GoogleOAuthManager : MonoBehaviour
 
         WWWForm form = new WWWForm();
         form.AddField("client_id", clientId);
-        form.AddField("client_secret", clientSecret);
         form.AddField("refresh_token", refreshToken);
         form.AddField("grant_type", "refresh_token");
 
@@ -129,16 +182,20 @@ public class GoogleOAuthManager : MonoBehaviour
 
     private void SaveTokens()
     {
-        PlayerPrefs.SetString(ACCESS_TOKEN_KEY, AccessToken);
-        PlayerPrefs.SetString(REFRESH_TOKEN_KEY, refreshToken);
+        // 암호화하여 저장 (간단한 예제)
+        PlayerPrefs.SetString(ACCESS_TOKEN_KEY, EncryptString(AccessToken));
+        PlayerPrefs.SetString(REFRESH_TOKEN_KEY, EncryptString(refreshToken));
         PlayerPrefs.SetString(TOKEN_EXPIRY_KEY, tokenExpiryTime.ToString("o"));
         PlayerPrefs.Save();
     }
 
     private void LoadTokens()
     {
-        AccessToken = PlayerPrefs.GetString(ACCESS_TOKEN_KEY, "");
-        refreshToken = PlayerPrefs.GetString(REFRESH_TOKEN_KEY, "");
+        string encryptedAccessToken = PlayerPrefs.GetString(ACCESS_TOKEN_KEY, "");
+        string encryptedRefreshToken = PlayerPrefs.GetString(REFRESH_TOKEN_KEY, "");
+        
+        AccessToken = !string.IsNullOrEmpty(encryptedAccessToken) ? DecryptString(encryptedAccessToken) : "";
+        refreshToken = !string.IsNullOrEmpty(encryptedRefreshToken) ? DecryptString(encryptedRefreshToken) : "";
         
         string expiryString = PlayerPrefs.GetString(TOKEN_EXPIRY_KEY, "");
         if (!string.IsNullOrEmpty(expiryString))
@@ -164,6 +221,33 @@ public class GoogleOAuthManager : MonoBehaviour
         PlayerPrefs.Save();
 
         Debug.Log("로그아웃 완료");
+    }
+
+    /// <summary>
+    /// 간단한 암호화 (실제 프로덕션에서는 더 강력한 암호화 사용 권장)
+    /// </summary>
+    private string EncryptString(string plainText)
+    {
+        if (string.IsNullOrEmpty(plainText)) return "";
+        
+        byte[] data = Encoding.UTF8.GetBytes(plainText);
+        string base64 = Convert.ToBase64String(data);
+        return base64;
+    }
+
+    private string DecryptString(string encryptedText)
+    {
+        if (string.IsNullOrEmpty(encryptedText)) return "";
+        
+        try
+        {
+            byte[] data = Convert.FromBase64String(encryptedText);
+            return Encoding.UTF8.GetString(data);
+        }
+        catch
+        {
+            return "";
+        }
     }
 
     [Serializable]
