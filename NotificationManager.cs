@@ -5,6 +5,7 @@ using UnityEngine;
 
 #if UNITY_ANDROID
 using Unity.Notifications.Android;
+using UnityEngine.Android;
 #elif UNITY_IOS
 using Unity.Notifications.iOS;
 #endif
@@ -19,6 +20,7 @@ public class NotificationManager : MonoBehaviour
 #if UNITY_ANDROID
     private const string CHANNEL_ID = "calendar_notifications";
     private const string CHANNEL_NAME = "일정 알림";
+    private bool permissionRequested = false;
 #endif
 
     private void Awake()
@@ -38,6 +40,55 @@ public class NotificationManager : MonoBehaviour
     private void InitializeNotifications()
     {
 #if UNITY_ANDROID
+        // Android 13 이상에서 권한 요청
+        if (!Permission.HasUserAuthorizedPermission("android.permission.POST_NOTIFICATIONS"))
+        {
+            RequestAndroidNotificationPermission();
+        }
+        else
+        {
+            RegisterNotificationChannel();
+        }
+#elif UNITY_IOS
+        StartCoroutine(RequestIOSAuthorization());
+#endif
+    }
+
+#if UNITY_ANDROID
+    private void RequestAndroidNotificationPermission()
+    {
+        if (permissionRequested) return;
+        
+        permissionRequested = true;
+        
+        var callbacks = new PermissionCallbacks();
+        callbacks.PermissionDenied += OnPermissionDenied;
+        callbacks.PermissionGranted += OnPermissionGranted;
+        callbacks.PermissionDeniedAndDontAskAgain += OnPermissionDeniedAndDontAskAgain;
+        
+        Permission.RequestUserPermission("android.permission.POST_NOTIFICATIONS", callbacks);
+    }
+
+    private void OnPermissionGranted(string permission)
+    {
+        Debug.Log($"알림 권한 허용됨: {permission}");
+        RegisterNotificationChannel();
+    }
+
+    private void OnPermissionDenied(string permission)
+    {
+        Debug.LogWarning($"알림 권한 거부됨: {permission}");
+        isEnabled = false;
+    }
+
+    private void OnPermissionDeniedAndDontAskAgain(string permission)
+    {
+        Debug.LogError($"알림 권한 영구 거부됨: {permission}");
+        isEnabled = false;
+    }
+
+    private void RegisterNotificationChannel()
+    {
         var channel = new AndroidNotificationChannel()
         {
             Id = CHANNEL_ID,
@@ -46,10 +97,8 @@ public class NotificationManager : MonoBehaviour
             Description = "캘린더 일정 알림",
         };
         AndroidNotificationCenter.RegisterNotificationChannel(channel);
-#elif UNITY_IOS
-        StartCoroutine(RequestIOSAuthorization());
-#endif
     }
+#endif
 
 #if UNITY_IOS
     private IEnumerator RequestIOSAuthorization()
@@ -62,12 +111,15 @@ public class NotificationManager : MonoBehaviour
                 yield return null;
             }
 
-            string res = "\n RequestAuthorization: \n";
-            res += "\n finished: " + req.IsCompleted;
-            res += "\n granted :  " + req.Granted;
-            res += "\n error:  " + req.Error;
-            res += "\n deviceToken:  " + req.DeviceToken;
-            Debug.Log(res);
+            if (req.Granted)
+            {
+                Debug.Log("iOS 알림 권한 허용됨");
+            }
+            else
+            {
+                Debug.LogWarning("iOS 알림 권한 거부됨");
+                isEnabled = false;
+            }
         }
     }
 #endif
