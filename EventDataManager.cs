@@ -50,24 +50,40 @@ public class EventDataManager : MonoBehaviour
         Debug.Log($"EventDataManager: {allEvents.Count}개 이벤트 설정됨");
     }
 
+    /// <summary>
+    /// 오늘의 일정 가져오기 (타임존 처리 개선)
+    /// </summary>
     public List<CalendarEvent> GetTodayEvents()
     {
-        DateTime today = DateTime.Today;
-        DateTime tomorrow = today.AddDays(1);
+        DateTime now = DateTime.Now;
+        DateTime todayStart = now.Date; // 오늘 00:00:00
+        DateTime tomorrowStart = todayStart.AddDays(1); // 내일 00:00:00
 
         return allEvents
-            .Where(e => e.startTime >= today && e.startTime < tomorrow)
+            .Where(e => {
+                // 일정의 시작 날짜만 비교 (시간 무시)
+                DateTime eventDate = e.startTime.Date;
+                
+                // 오늘 날짜인 일정만 포함
+                return eventDate >= todayStart && eventDate < tomorrowStart;
+            })
             .OrderBy(e => e.startTime)
             .ToList();
     }
 
+    /// <summary>
+    /// 특정 날짜의 일정 가져오기 (타임존 처리 개선)
+    /// </summary>
     public List<CalendarEvent> GetEventsByDate(DateTime date)
     {
-        DateTime startOfDay = date.Date;
-        DateTime endOfDay = startOfDay.AddDays(1);
+        DateTime startOfDay = date.Date; // 해당 날짜 00:00:00
+        DateTime endOfDay = startOfDay.AddDays(1); // 다음 날 00:00:00
 
         return allEvents
-            .Where(e => e.startTime >= startOfDay && e.startTime < endOfDay)
+            .Where(e => {
+                DateTime eventDate = e.startTime.Date;
+                return eventDate >= startOfDay && eventDate < endOfDay;
+            })
             .OrderBy(e => e.startTime)
             .ToList();
     }
@@ -156,7 +172,8 @@ public class EventDataManager : MonoBehaviour
 
         foreach (var evt in allEvents)
         {
-            if (evt.startTime.Date < today && completionStatus.ContainsKey(evt.id))
+            DateTime eventDate = evt.startTime.Date;
+            if (eventDate < today && completionStatus.ContainsKey(evt.id))
             {
                 keysToRemove.Add(evt.id);
             }
