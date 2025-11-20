@@ -102,7 +102,7 @@ public class SyncManager : MonoBehaviour
 
             GoogleCalendarAPI.Instance.GetTodayEvents();
 
-            float timeout = 10f;
+            float timeout = 30f;
             float elapsed = 0f;
 
             while (!syncCompleted && !syncFailed && elapsed < timeout)
